@@ -1,62 +1,44 @@
-import time
-import logging
-import psutil
 from flask import Blueprint, request, jsonify
-from .utils import validate_payload
+import time, logging, psutil
+from .utils import validate_payload, format_eta, reverse_geocode
 from .optimizer import optimize_route
 
-# Blueprint for optimizer routes
 optimizer_bp = Blueprint("optimizer", __name__)
 
 @optimizer_bp.route("/", methods=["GET"])
 def home():
-    """Simple health check endpoint."""
     return "Flask is working!"
 
 @optimizer_bp.route("/optimize", methods=["POST"])
 def optimize_route_api():
-    """
-    Endpoint to compute optimized route and ETA.
-
-    Logs performance metrics (execution time, CPU and memory deltas).
-    Validates input payload using utils.validate_payload.
-    """
-    # Start performance measurement
     start_ts = time.time()
-    proc = psutil.Process()
-    cpu_before = proc.cpu_percent(interval=None)
-    mem_before = proc.memory_info().rss
+    proc     = psutil.Process()
+    cpu_b    = proc.cpu_percent(None)
+    mem_b    = proc.memory_info().rss
 
-    # Parse and validate request payload
     data = request.get_json()
     try:
         validate_payload(data)
     except ValueError as e:
         return jsonify({"error": str(e)}), 400
 
-    origin = data["origin"]
+    origin       = data["origin"]
     destinations = data["destinations"]
-    time_of_day = data["time_of_day"]
-    traffic_level = data["traffic_level"]
+    tod          = data["time_of_day"]
+    lvl          = data["traffic_level"]
 
-    # Run optimization logic
-    route, eta = optimize_route(origin, destinations, time_of_day, traffic_level)
+    coords_route, eta_min = optimize_route(origin, destinations, tod, lvl)
 
-    # Measure performance after computation
-    cpu_after = proc.cpu_percent(interval=None)
-    mem_after = proc.memory_info().rss
+    # convert coords to street names
+    named_route = [ reverse_geocode(pt) for pt in coords_route ]
+
+    cpu_a   = proc.cpu_percent(None)
+    mem_a   = proc.memory_info().rss
     elapsed = time.time() - start_ts
+    logging.info("Optimize: %.3fs | ΔCPU: %.1f%% | ΔMem: %.1fKiB",
+                 elapsed, cpu_a - cpu_b, (mem_a - mem_b)/1024)
 
-    # Log performance metrics
-    logging.info(
-        "Optimize: %.3fs | ΔCPU: %.1f%% | ΔMem: %.1fKiB",
-        elapsed,
-        cpu_after - cpu_before,
-        (mem_after - mem_before) / 1024,
-    )
-
-    # Return JSON response
     return jsonify({
-        "optimized_route": route,
-        "estimated_time": eta
+      "optimized_route": named_route,
+      "estimated_time": format_eta(eta_min)
     })

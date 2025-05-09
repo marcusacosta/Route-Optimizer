@@ -1,4 +1,5 @@
 Flask
 psutil
 pytest
-gunicorn
+gunicorngeopy
+geopy
